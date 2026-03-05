@@ -26,6 +26,12 @@ import {
   Cell
 } from 'recharts';
 import { cn } from './lib/utils';
+import { 
+  runStrategyAgent, 
+  runProductAgent, 
+  runMarketingAgent, 
+  runOperationsAgent 
+} from './services/agentService';
 
 // --- Types ---
 
@@ -136,6 +142,40 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Frontend Polling for Agents
+  React.useEffect(() => {
+    if (!data || !configStatus.notionConfigured) return;
+
+    const pollAgents = async () => {
+      // 1. Check for new goals
+      const newGoals = data.goals.filter(g => g.properties.Status?.select?.name === "To Do");
+      for (const goal of newGoals) {
+        const name = goal.properties["Goal Name"].title[0]?.plain_text;
+        const desc = goal.properties["Description"].rich_text[0]?.plain_text || "";
+        if (name) {
+          console.log("Triggering Strategy Agent for:", name);
+          await runStrategyAgent(goal.id, name, desc);
+          await fetchData(); // Refresh data after agent run
+        }
+      }
+
+      // 2. Check for new projects
+      const newProjects = data.projects.filter(p => p.properties.Status?.select?.name === "Not Started");
+      for (const project of newProjects) {
+        const name = project.properties["Project Name"].title[0]?.plain_text;
+        const plan = project.properties["AI Generated Plan"].rich_text[0]?.plain_text || "";
+        if (name) {
+          console.log("Triggering Product Agent for:", name);
+          await runProductAgent(project.id, name, plan);
+          await fetchData();
+        }
+      }
+    };
+
+    const interval = setInterval(pollAgents, 15000); // Poll every 15s
+    return () => clearInterval(interval);
+  }, [data, configStatus.notionConfigured]);
+
   const [command, setCommand] = React.useState('');
   const [executingCommand, setExecutingCommand] = React.useState(false);
   const [report, setReport] = React.useState<string | null>(null);
@@ -152,8 +192,12 @@ export default function App() {
         body: JSON.stringify({ command })
       });
       if (res.ok) {
+        const result = await res.json();
         setCommand('');
-        fetchData();
+        await fetchData();
+        // Trigger Strategy Agent immediately
+        await runStrategyAgent(result.goalId, command, `Generated from command: ${command}`);
+        await fetchData();
       }
     } catch (err) {
       console.error(err);
@@ -163,15 +207,52 @@ export default function App() {
   };
 
   const generateReport = async () => {
+    if (!data) return;
     setGeneratingReport(true);
     try {
-      const res = await fetch('/api/agents/ceo-report', { method: 'POST' });
-      const data = await res.json();
-      setReport(data.report);
+      const reportContent = await runOperationsAgent(data.goals, data.projects, data.tasks);
+      setReport(reportContent);
     } catch (err) {
       console.error(err);
     } finally {
       setGeneratingReport(false);
+    }
+  };
+
+  const [syncing, setSyncing] = React.useState(false);
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      await fetch('/api/notion/sync', { method: 'POST' });
+      await fetchData();
+      
+      // Manual trigger of agent scan
+      if (data && configStatus.notionConfigured) {
+        // 1. Check for new goals
+        const newGoals = data.goals.filter(g => g.properties.Status?.select?.name === "To Do");
+        for (const goal of newGoals) {
+          const name = goal.properties["Goal Name"].title[0]?.plain_text;
+          const desc = goal.properties["Description"].rich_text[0]?.plain_text || "";
+          if (name) {
+            await runStrategyAgent(goal.id, name, desc);
+          }
+        }
+
+        // 2. Check for new projects
+        const newProjects = data.projects.filter(p => p.properties.Status?.select?.name === "Not Started");
+        for (const project of newProjects) {
+          const name = project.properties["Project Name"].title[0]?.plain_text;
+          const plan = project.properties["AI Generated Plan"].rich_text[0]?.plain_text || "";
+          if (name) {
+            await runProductAgent(project.id, name, plan);
+          }
+        }
+        await fetchData();
+      }
+    } catch (err) {
+      console.error("Sync error:", err);
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -621,6 +702,14 @@ export default function App() {
             </p>
           </div>
           <div className="flex items-center gap-4">
+            <button 
+              onClick={handleSync}
+              disabled={syncing}
+              className="flex items-center gap-2 px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-sm font-medium hover:bg-zinc-800 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw size={18} className={cn(syncing && "animate-spin")} />
+              {syncing ? "Syncing..." : "Sync Notion"}
+            </button>
             <button 
               onClick={() => setShowNewGoalModal(true)}
               className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-sm font-medium transition-colors"

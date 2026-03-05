@@ -1,7 +1,6 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import { Client } from "@notionhq/client";
-import { GoogleGenAI, Type } from "@google/genai";
 import * as dotenv from "dotenv";
 import fetch from "node-fetch";
 
@@ -15,9 +14,6 @@ app.use(express.json());
 // In-memory session for demo purposes
 let notionToken = process.env.NOTION_API_KEY || "";
 let notionClient = notionToken ? new Client({ auth: notionToken }) : null;
-
-// Gemini Client
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // --- Notion OAuth ---
 
@@ -155,275 +151,79 @@ app.get("/api/notion/data", async (req, res) => {
   }
 });
 
-// --- Agent Orchestration ---
-
-async function runStrategyAgent(goalId: string, goalName: string, goalDesc: string) {
-  const model = "gemini-3.1-pro-preview";
-  const prompt = `You are the Strategy Agent for EmpireOS. 
-A new goal has been created: "${goalName}".
-Description: ${goalDesc}
-
-Your task:
-1. Break this goal into 3-5 high-level Projects.
-2. For each project, provide a name and a brief AI-generated plan.
-
-Return the result as a JSON array of projects.`;
-
-  const response = await genAI.models.generateContent({
-    model,
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            name: { type: Type.STRING },
-            plan: { type: Type.STRING },
-          },
-          required: ["name", "plan"],
-        },
-      },
-    },
-  });
-
-  const projects = JSON.parse(response.text || "[]");
-  
-  for (const p of projects) {
-    const projectResponse = await createPage(process.env.NOTION_PROJECTS_DB_ID!, {
-      "Project Name": { title: [{ text: { content: p.name } }] },
+app.post("/api/notion/create-project", async (req, res) => {
+  const { goalId, name, plan } = req.body;
+  try {
+    const response = await createPage(process.env.NOTION_PROJECTS_DB_ID!, {
+      "Project Name": { title: [{ text: { content: name } }] },
       "Related Goal": { relation: [{ id: goalId }] },
       "Status": { select: { name: "Not Started" } },
-      "AI Generated Plan": { rich_text: [{ text: { content: p.plan } }] },
+      "AI Generated Plan": { rich_text: [{ text: { content: plan } }] },
     });
-
-    // Trigger Product Agent for each new project
-    await runProductAgent(projectResponse.id, p.name, p.plan);
-    
-    // Trigger Marketing Agent for each new project
-    await runMarketingAgent(projectResponse.id, p.name, p.plan);
-  }
-
-  // Update Goal status
-  await updatePage(goalId, {
-    "Status": { select: { name: "In Progress" } },
-    "AI Breakdown": { rich_text: [{ text: { content: "Strategy Agent has processed this goal and created projects." } }] },
-  });
-
-  // Log Agent action
-  await logAgentAction("Strategy Agent", `Created ${projects.length} projects for goal: ${goalName}`);
-}
-
-async function runProductAgent(projectId: string, projectName: string, projectPlan: string) {
-  const model = "gemini-3.1-pro-preview";
-  const prompt = `You are the Product Agent for EmpireOS.
-Project: "${projectName}"
-Plan: ${projectPlan}
-
-Your task:
-1. Break this project into 3-5 actionable Tasks.
-2. For each task, provide a name and a brief AI note.
-
-Return the result as a JSON array of tasks.`;
-
-  const response = await genAI.models.generateContent({
-    model,
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            name: { type: Type.STRING },
-            note: { type: Type.STRING },
-          },
-          required: ["name", "note"],
-        },
-      },
-    },
-  });
-
-  const tasks = JSON.parse(response.text || "[]");
-
-  for (const t of tasks) {
-    await createPage(process.env.NOTION_TASKS_DB_ID!, {
-      "Task Name": { title: [{ text: { content: t.name } }] },
-      "Project": { relation: [{ id: projectId }] },
-      "Status": { select: { name: "To Do" } },
-      "AI Notes": { rich_text: [{ text: { content: t.note } }] },
-    });
-  }
-
-  // Update Project status
-  await updatePage(projectId, {
-    "Status": { select: { name: "In Progress" } },
-  });
-
-  await logAgentAction("Product Agent", `Generated ${tasks.length} tasks for project: ${projectName}`);
-}
-
-async function runMarketingAgent(projectId: string, projectName: string, projectPlan: string) {
-  const model = "gemini-3.1-pro-preview";
-  const prompt = `You are the Marketing Agent for EmpireOS.
-Project: "${projectName}"
-Plan: ${projectPlan}
-
-Your task:
-1. Create a marketing campaign for this project.
-2. Generate:
-   - Launch Strategy
-   - Social Media Plan
-   - Content Calendar
-3. Return the result as a professional summary.`;
-
-  const response = await genAI.models.generateContent({
-    model,
-    contents: prompt,
-  });
-
-  const marketingPlan = response.text || "Failed to generate marketing plan.";
-
-  // In a real app, we might have a Marketing database.
-  // For now, we'll append it to the Project's AI Generated Plan or log it.
-  await logAgentAction("Marketing Agent", `Generated launch strategy for: ${projectName}`);
-}
-
-async function logAgentAction(agentName: string, action: string) {
-  const agents = await queryDatabase(process.env.NOTION_AGENTS_DB_ID!, {
-    property: "Agent Name",
-    title: { equals: agentName }
-  });
-
-  if (agents.length > 0) {
-    await updatePage(agents[0].id, {
-      "Last Action": { rich_text: [{ text: { content: action } }] },
-      "Status": { select: { name: "Active" } },
-    });
-  } else {
-    await createPage(process.env.NOTION_AGENTS_DB_ID!, {
-      "Agent Name": { title: [{ text: { content: agentName } }] },
-      "Role": { rich_text: [{ text: { content: "Autonomous AI Agent" } }] },
-      "Status": { select: { name: "Active" } },
-      "Last Action": { rich_text: [{ text: { content: action } }] },
-    });
-  }
-}
-
-// Polling for changes (simplified for hackathon)
-setInterval(async () => {
-  if (!process.env.NOTION_API_KEY || !process.env.NOTION_GOALS_DB_ID) return;
-
-  try {
-    // Check for new goals with status "To Do" or empty
-    const newGoals = await queryDatabase(process.env.NOTION_GOALS_DB_ID!, {
-      property: "Status",
-      select: { equals: "To Do" }
-    });
-
-    for (const goal of newGoals as any[]) {
-      const name = goal.properties["Goal Name"].title[0]?.plain_text;
-      const desc = goal.properties["Description"].rich_text[0]?.plain_text || "";
-      if (name) {
-        console.log(`Processing new goal: ${name}`);
-        await runStrategyAgent(goal.id, name, desc);
-      }
-    }
-
-    // Check for projects with status "Not Started"
-    const newProjects = await queryDatabase(process.env.NOTION_PROJECTS_DB_ID!, {
-      property: "Status",
-      select: { equals: "Not Started" }
-    });
-
-    for (const project of newProjects as any[]) {
-      const name = project.properties["Project Name"].title[0]?.plain_text;
-      const plan = project.properties["AI Generated Plan"].rich_text[0]?.plain_text || "";
-      if (name) {
-        console.log(`Processing new project: ${name}`);
-        await runProductAgent(project.id, name, plan);
-      }
-    }
+    res.json(response);
   } catch (error) {
-    console.error("Polling error:", error);
-  }
-}, 30000); // Poll every 30 seconds
-
-// --- Advanced Features ---
-
-app.post("/api/agents/command", async (req, res) => {
-  const { command } = req.body;
-  if (!command) return res.status(400).json({ error: "Command is required" });
-
-  try {
-    // 1. Create a new Goal from the command
-    const goalResponse = await createPage(process.env.NOTION_GOALS_DB_ID!, {
-      "Goal Name": { title: [{ text: { content: command } }] },
-      "Status": { select: { name: "To Do" } },
-      "Description": { rich_text: [{ text: { content: `Generated from command: ${command}` } }] },
-    });
-
-    // 2. Trigger Strategy Agent immediately
-    await runStrategyAgent(goalResponse.id, command, `Generated from command: ${command}`);
-
-    res.json({ success: true, message: "Startup command initiated. Strategy Agent is processing." });
-  } catch (error) {
-    console.error("Command error:", error);
-    res.status(500).json({ error: "Failed to execute command" });
+    res.status(500).json({ error: "Failed to create project" });
   }
 });
 
-app.post("/api/agents/ceo-report", async (req, res) => {
+app.post("/api/notion/create-task", async (req, res) => {
+  const { projectId, name, note } = req.body;
   try {
-    const [goals, projects, tasks] = await Promise.all([
-      queryDatabase(process.env.NOTION_GOALS_DB_ID!),
-      queryDatabase(process.env.NOTION_PROJECTS_DB_ID!),
-      queryDatabase(process.env.NOTION_TASKS_DB_ID!),
-    ]);
+    const response = await createPage(process.env.NOTION_TASKS_DB_ID!, {
+      "Task Name": { title: [{ text: { content: name } }] },
+      "Project": { relation: [{ id: projectId }] },
+      "Status": { select: { name: "To Do" } },
+      "AI Notes": { rich_text: [{ text: { content: note } }] },
+    });
+    res.json(response);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to create task" });
+  }
+});
 
-    const model = "gemini-3.1-pro-preview";
-    const prompt = `You are the Operations Agent for EmpireOS. 
-Generate a Weekly CEO Report based on the following startup data:
-Goals: ${JSON.stringify(goals)}
-Projects: ${JSON.stringify(projects)}
-Tasks: ${JSON.stringify(tasks)}
-
-The report should include:
-1. Progress Summary
-2. Potential Blockers
-3. Opportunities
-4. Recommended Actions
-
-Format the report as professional markdown.`;
-
-    const response = await genAI.models.generateContent({
-      model,
-      contents: prompt,
+app.post("/api/agents/log-action", async (req, res) => {
+  const { agentName, action } = req.body;
+  try {
+    const agents = await queryDatabase(process.env.NOTION_AGENTS_DB_ID!, {
+      property: "Agent Name",
+      title: { equals: agentName }
     });
 
-    const reportContent = response.text || "Failed to generate report.";
-
-    // In a real app, we'd create a new page in a "Reports" database.
-    // For now, we'll log it and return it.
-    await logAgentAction("Operations Agent", "Generated Weekly CEO Report.");
-
-    res.json({ report: reportContent });
+    if (agents.length > 0) {
+      await updatePage(agents[0].id, {
+        "Last Action": { rich_text: [{ text: { content: action } }] },
+        "Status": { select: { name: "Active" } },
+      });
+    } else {
+      await createPage(process.env.NOTION_AGENTS_DB_ID!, {
+        "Agent Name": { title: [{ text: { content: agentName } }] },
+        "Role": { rich_text: [{ text: { content: "Autonomous AI Agent" } }] },
+        "Status": { select: { name: "Active" } },
+        "Last Action": { rich_text: [{ text: { content: action } }] },
+      });
+    }
+    res.json({ success: true });
   } catch (error) {
-    console.error("Report error:", error);
-    res.status(500).json({ error: "Failed to generate report" });
+    res.status(500).json({ error: "Failed to log agent action" });
   }
+});
+
+app.post("/api/notion/sync", async (req, res) => {
+  // Manual sync just returns success now, frontend will handle the agent triggering
+  res.json({ success: true, message: "Sync triggered in frontend" });
 });
 
 app.post("/api/notion/update-status", async (req, res) => {
-  const { pageId, status, type } = req.body;
+  const { pageId, status, type, notes } = req.body;
   if (!pageId || !status) return res.status(400).json({ error: "Missing parameters" });
 
   try {
     let properties: any = {};
     if (type === 'goal' || type === 'project' || type === 'task') {
       properties["Status"] = { select: { name: status } };
+    }
+    if (notes) {
+      properties["AI Breakdown"] = { rich_text: [{ text: { content: notes } }] };
     }
 
     await updatePage(pageId, properties);
@@ -444,10 +244,6 @@ app.post("/api/notion/create-goal", async (req, res) => {
       "Status": { select: { name: "To Do" } },
       "Description": { rich_text: [{ text: { content: description || "" } }] },
     });
-
-    // Trigger Strategy Agent
-    runStrategyAgent(goalResponse.id, name, description || "");
-
     res.json({ success: true, goalId: goalResponse.id });
   } catch (error) {
     console.error("Create goal error:", error);
