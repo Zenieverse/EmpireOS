@@ -1,0 +1,5 @@
+{
+  "name": "EmpireOS",
+  "description": "AI-powered startup operating system using Notion as the central command center for autonomous agents.",
+  "requestFramePermissions": []
+}
