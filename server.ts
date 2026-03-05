@@ -200,6 +200,9 @@ Return the result as a JSON array of projects.`;
 
     // Trigger Product Agent for each new project
     await runProductAgent(projectResponse.id, p.name, p.plan);
+    
+    // Trigger Marketing Agent for each new project
+    await runMarketingAgent(projectResponse.id, p.name, p.plan);
   }
 
   // Update Goal status
@@ -210,13 +213,6 @@ Return the result as a JSON array of projects.`;
 
   // Log Agent action
   await logAgentAction("Strategy Agent", `Created ${projects.length} projects for goal: ${goalName}`);
-
-  // Trigger Product Agent for each new project
-  for (const p of projects) {
-    // We need to find the project ID we just created.
-    // In a real app, we'd get it from the createPage response.
-    // Let's assume we have it or query for it.
-  }
 }
 
 async function runProductAgent(projectId: string, projectName: string, projectPlan: string) {
@@ -267,6 +263,32 @@ Return the result as a JSON array of tasks.`;
   });
 
   await logAgentAction("Product Agent", `Generated ${tasks.length} tasks for project: ${projectName}`);
+}
+
+async function runMarketingAgent(projectId: string, projectName: string, projectPlan: string) {
+  const model = "gemini-3.1-pro-preview";
+  const prompt = `You are the Marketing Agent for EmpireOS.
+Project: "${projectName}"
+Plan: ${projectPlan}
+
+Your task:
+1. Create a marketing campaign for this project.
+2. Generate:
+   - Launch Strategy
+   - Social Media Plan
+   - Content Calendar
+3. Return the result as a professional summary.`;
+
+  const response = await genAI.models.generateContent({
+    model,
+    contents: prompt,
+  });
+
+  const marketingPlan = response.text || "Failed to generate marketing plan.";
+
+  // In a real app, we might have a Marketing database.
+  // For now, we'll append it to the Project's AI Generated Plan or log it.
+  await logAgentAction("Marketing Agent", `Generated launch strategy for: ${projectName}`);
 }
 
 async function logAgentAction(agentName: string, action: string) {

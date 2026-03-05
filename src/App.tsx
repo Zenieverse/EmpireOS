@@ -281,19 +281,41 @@ export default function App() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card title="Active Goals" subtitle="High-level strategic objectives">
-            <div className="space-y-3 mt-4">
+          <Card title="Startup Hierarchy" subtitle="Goal → Projects → Tasks mapping">
+            <div className="space-y-6 mt-4">
               {data.goals.map(goal => (
-                <div key={goal.id} className="flex items-center justify-between p-3 rounded-lg bg-zinc-800/30 border border-zinc-800/50">
-                  <div className="flex items-center gap-3">
-                    <div className="w-2 h-2 rounded-full bg-purple-500" />
-                    <span className="text-sm font-medium text-zinc-200">{goal.properties["Goal Name"].title[0]?.plain_text}</span>
+                <div key={goal.id} className="space-y-3">
+                  <div className="flex items-center gap-3 p-2 rounded-lg bg-purple-500/5 border border-purple-500/10">
+                    <Target size={16} className="text-purple-400" />
+                    <span className="text-sm font-bold text-zinc-100">{goal.properties["Goal Name"].title[0]?.plain_text}</span>
                   </div>
-                  <Badge variant={goal.properties.Status?.select?.name === "In Progress" ? "info" : "default"}>
-                    {goal.properties.Status?.select?.name || "To Do"}
-                  </Badge>
+                  <div className="pl-6 space-y-2 border-l border-zinc-800 ml-4">
+                    {data.projects
+                      .filter(p => p.properties["Related Goal"]?.relation?.some((r: any) => r.id === goal.id))
+                      .map(project => (
+                        <div key={project.id} className="space-y-2">
+                          <div className="flex items-center gap-2 text-xs font-medium text-zinc-400">
+                            <Briefcase size={12} className="text-blue-400" />
+                            {project.properties["Project Name"].title[0]?.plain_text}
+                          </div>
+                          <div className="pl-4 space-y-1">
+                            {data.tasks
+                              .filter(t => t.properties["Project"]?.relation?.some((r: any) => r.id === project.id))
+                              .map(task => (
+                                <div key={task.id} className="flex items-center gap-2 text-[10px] text-zinc-600">
+                                  <div className="w-1 h-1 rounded-full bg-zinc-700" />
+                                  {task.properties["Task Name"].title[0]?.plain_text}
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
                 </div>
               ))}
+              {data.goals.length === 0 && (
+                <p className="text-sm text-zinc-600 italic">No goals defined yet. Use the command bar to start.</p>
+              )}
             </div>
           </Card>
 
