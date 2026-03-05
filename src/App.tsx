@@ -175,6 +175,211 @@ export default function App() {
     }
   };
 
+  const [showNewGoalModal, setShowNewGoalModal] = React.useState(false);
+  const [newGoal, setNewGoal] = React.useState({ name: '', description: '' });
+
+  const handleCreateGoal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newGoal.name.trim()) return;
+    try {
+      const res = await fetch('/api/notion/create-goal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newGoal)
+      });
+      if (res.ok) {
+        setNewGoal({ name: '', description: '' });
+        setShowNewGoalModal(false);
+        fetchData();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const updateStatus = async (pageId: string, status: string, type: string) => {
+    try {
+      const res = await fetch('/api/notion/update-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId, status, type })
+      });
+      if (res.ok) fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const renderGoals = () => (
+    <div className="space-y-4">
+      {data?.goals.map(goal => (
+        <Card key={goal.id} className="p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-bold text-white">{goal.properties["Goal Name"].title[0]?.plain_text}</h3>
+              <p className="text-sm text-zinc-500 mt-1">{goal.properties["Description"].rich_text[0]?.plain_text || "No description provided."}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <select 
+                value={goal.properties.Status?.select?.name || "To Do"}
+                onChange={(e) => updateStatus(goal.id, e.target.value, 'goal')}
+                className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-200 outline-none"
+              >
+                <option value="To Do">To Do</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Done">Done</option>
+              </select>
+            </div>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+
+  const renderProjects = () => (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {data?.projects.map(project => (
+        <Card key={project.id} title={project.properties["Project Name"].title[0]?.plain_text}>
+          <p className="text-sm text-zinc-500 mb-4 line-clamp-3">
+            {project.properties["AI Generated Plan"].rich_text[0]?.plain_text || "Planning in progress..."}
+          </p>
+          <div className="flex items-center justify-between mt-auto pt-4 border-t border-zinc-800">
+            <Badge variant="info">{project.properties.Status?.select?.name || "Not Started"}</Badge>
+            <button className="text-xs text-purple-400 hover:text-purple-300 font-medium">View Plan</button>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+
+  const renderTasks = () => (
+    <div className="space-y-2">
+      {data?.tasks.map(task => (
+        <div key={task.id} className="flex items-center justify-between p-4 bg-zinc-900/50 border border-zinc-800 rounded-xl">
+          <div className="flex items-center gap-4">
+            <div className={cn(
+              "w-5 h-5 rounded border flex items-center justify-center cursor-pointer transition-colors",
+              task.properties.Status?.select?.name === "Done" ? "bg-emerald-500 border-emerald-500" : "border-zinc-700 hover:border-zinc-500"
+            )} onClick={() => updateStatus(task.id, task.properties.Status?.select?.name === "Done" ? "To Do" : "Done", 'task')}>
+              {task.properties.Status?.select?.name === "Done" && <CheckSquare size={14} className="text-white" />}
+            </div>
+            <div>
+              <p className={cn("text-sm font-medium", task.properties.Status?.select?.name === "Done" ? "text-zinc-600 line-through" : "text-zinc-200")}>
+                {task.properties["Task Name"].title[0]?.plain_text}
+              </p>
+              <p className="text-xs text-zinc-500 mt-0.5">{task.properties["AI Notes"].rich_text[0]?.plain_text || "No notes."}</p>
+            </div>
+          </div>
+          <Badge variant={task.properties.Priority?.select?.name === "High" ? "warning" : "default"}>
+            {task.properties.Priority?.select?.name || "Normal"}
+          </Badge>
+        </div>
+      ))}
+    </div>
+  );
+
+  const renderAgents = () => (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {data?.agents.map(agent => (
+        <Card key={agent.id} className="relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-4">
+            <div className={cn("w-2 h-2 rounded-full", agent.properties.Status?.select?.name === "Active" ? "bg-emerald-500 animate-pulse" : "bg-zinc-700")} />
+          </div>
+          <div className="flex flex-col items-center text-center py-4">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-purple-500/20 to-blue-500/20 flex items-center justify-center mb-4 border border-white/5">
+              <Users size={32} className="text-purple-400" />
+            </div>
+            <h3 className="text-lg font-bold text-white">{agent.properties["Agent Name"].title[0]?.plain_text}</h3>
+            <p className="text-xs text-zinc-500 uppercase tracking-widest mt-1">{agent.properties["Role"].rich_text[0]?.plain_text || "AI Agent"}</p>
+            <div className="mt-6 w-full p-3 bg-black/30 rounded-lg text-left">
+              <p className="text-[10px] text-zinc-600 uppercase font-bold mb-1">Last Action</p>
+              <p className="text-xs text-zinc-400 italic">"{agent.properties["Last Action"].rich_text[0]?.plain_text || "Waiting for tasks..."}"</p>
+            </div>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+
+  const renderAnalytics = () => {
+    const pieData = [
+      { name: 'Completed', value: data?.tasks.filter(t => t.properties.Status?.select?.name === "Done").length || 0 },
+      { name: 'Pending', value: data?.tasks.filter(t => t.properties.Status?.select?.name !== "Done").length || 0 },
+    ];
+    const COLORS = ['#10b981', '#3f3f46'];
+
+    return (
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card title="Task Distribution" subtitle="Overall progress across all projects">
+          <div className="h-[300px] w-full mt-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={80}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  {pieData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '8px' }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="flex justify-center gap-6 mt-4">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-emerald-500" />
+              <span className="text-xs text-zinc-400">Done</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-zinc-700" />
+              <span className="text-xs text-zinc-400">Pending</span>
+            </div>
+          </div>
+        </Card>
+
+        <Card title="Performance Metrics" subtitle="Weekly efficiency and velocity">
+          <div className="space-y-6 mt-4">
+            <div>
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-zinc-400">Project Completion Rate</span>
+                <span className="text-zinc-100 font-bold">68%</span>
+              </div>
+              <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+                <div className="h-full bg-blue-500 w-[68%]" />
+              </div>
+            </div>
+            <div>
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-zinc-400">Agent Efficiency</span>
+                <span className="text-zinc-100 font-bold">92%</span>
+              </div>
+              <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+                <div className="h-full bg-emerald-500 w-[92%]" />
+              </div>
+            </div>
+            <div>
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-zinc-400">Strategy Alignment</span>
+                <span className="text-zinc-100 font-bold">85%</span>
+              </div>
+              <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+                <div className="h-full bg-purple-500 w-[85%]" />
+              </div>
+            </div>
+          </div>
+        </Card>
+      </div>
+    );
+  };
+
   const renderDashboard = () => {
     if (!data) return null;
 
@@ -417,6 +622,13 @@ export default function App() {
           </div>
           <div className="flex items-center gap-4">
             <button 
+              onClick={() => setShowNewGoalModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              <Plus size={18} />
+              New Goal
+            </button>
+            <button 
               onClick={generateReport}
               disabled={generatingReport}
               className="flex items-center gap-2 px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-sm font-medium hover:bg-zinc-800 transition-colors disabled:opacity-50"
@@ -445,14 +657,63 @@ export default function App() {
             ) : !configStatus.notionConfigured ? (
               renderNotionSetup()
             ) : (
-              activeTab === 'dashboard' ? renderDashboard() : (
-                <div className="flex flex-col items-center justify-center h-[40vh] text-zinc-500 border border-dashed border-zinc-800 rounded-2xl">
-                  <p>Detailed {activeTab} view coming soon in the next iteration.</p>
-                  <p className="text-sm mt-2">Use the Dashboard for the main overview.</p>
-                </div>
-              )
+              activeTab === 'dashboard' ? renderDashboard() : 
+              activeTab === 'goals' ? renderGoals() :
+              activeTab === 'projects' ? renderProjects() :
+              activeTab === 'tasks' ? renderTasks() :
+              activeTab === 'agents' ? renderAgents() :
+              activeTab === 'analytics' ? renderAnalytics() : null
             )}
           </motion.div>
+        </AnimatePresence>
+
+        {/* New Goal Modal */}
+        <AnimatePresence>
+          {showNewGoalModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-md overflow-hidden"
+              >
+                <div className="p-6 border-b border-zinc-800 flex items-center justify-between">
+                  <h3 className="text-xl font-bold text-white">New Strategic Goal</h3>
+                  <button onClick={() => setShowNewGoalModal(false)} className="text-zinc-500 hover:text-white">
+                    <Plus size={24} className="rotate-45" />
+                  </button>
+                </div>
+                <form onSubmit={handleCreateGoal} className="p-6 space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">Goal Name</label>
+                    <input 
+                      type="text" 
+                      required
+                      value={newGoal.name}
+                      onChange={(e) => setNewGoal({...newGoal, name: e.target.value})}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-white outline-none focus:border-purple-500 transition-colors"
+                      placeholder="e.g. Expand to European Market"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">Description</label>
+                    <textarea 
+                      value={newGoal.description}
+                      onChange={(e) => setNewGoal({...newGoal, description: e.target.value})}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-white outline-none focus:border-purple-500 transition-colors h-32 resize-none"
+                      placeholder="Describe the objective and success criteria..."
+                    />
+                  </div>
+                  <button 
+                    type="submit"
+                    className="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl transition-all shadow-[0_0_20px_rgba(168,85,247,0.2)]"
+                  >
+                    Create Goal
+                  </button>
+                </form>
+              </motion.div>
+            </div>
+          )}
         </AnimatePresence>
 
         {/* Report Modal */}

@@ -416,6 +416,45 @@ Format the report as professional markdown.`;
   }
 });
 
+app.post("/api/notion/update-status", async (req, res) => {
+  const { pageId, status, type } = req.body;
+  if (!pageId || !status) return res.status(400).json({ error: "Missing parameters" });
+
+  try {
+    let properties: any = {};
+    if (type === 'goal' || type === 'project' || type === 'task') {
+      properties["Status"] = { select: { name: status } };
+    }
+
+    await updatePage(pageId, properties);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Update status error:", error);
+    res.status(500).json({ error: "Failed to update status" });
+  }
+});
+
+app.post("/api/notion/create-goal", async (req, res) => {
+  const { name, description } = req.body;
+  if (!name) return res.status(400).json({ error: "Name is required" });
+
+  try {
+    const goalResponse = await createPage(process.env.NOTION_GOALS_DB_ID!, {
+      "Goal Name": { title: [{ text: { content: name } }] },
+      "Status": { select: { name: "To Do" } },
+      "Description": { rich_text: [{ text: { content: description || "" } }] },
+    });
+
+    // Trigger Strategy Agent
+    runStrategyAgent(goalResponse.id, name, description || "");
+
+    res.json({ success: true, goalId: goalResponse.id });
+  } catch (error) {
+    console.error("Create goal error:", error);
+    res.status(500).json({ error: "Failed to create goal" });
+  }
+});
+
 // --- Vite Middleware ---
 
 async function startServer() {
