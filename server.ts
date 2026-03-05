@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import { Client } from "@notionhq/client";
 import { GoogleGenAI, Type } from "@google/genai";
 import * as dotenv from "dotenv";
+import fetch from "node-fetch";
 
 dotenv.config();
 
@@ -11,17 +12,84 @@ const PORT = 3000;
 
 app.use(express.json());
 
-// Notion Client
-const notion = new Client({ auth: process.env.NOTION_API_KEY });
+// In-memory session for demo purposes
+let notionToken = process.env.NOTION_API_KEY || "";
+let notionClient = notionToken ? new Client({ auth: notionToken }) : null;
 
 // Gemini Client
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+// --- Notion OAuth ---
+
+app.get("/api/auth/notion/url", (req, res) => {
+  const clientId = process.env.NOTION_CLIENT_ID;
+  const redirectUri = process.env.NOTION_REDIRECT_URI || `${process.env.APP_URL}/auth/notion/callback`;
+  
+  if (!clientId) {
+    return res.status(400).json({ error: "NOTION_CLIENT_ID not configured" });
+  }
+
+  const authUrl = `https://api.notion.com/v1/oauth/authorize?client_id=${clientId}&response_type=code&owner=user&redirect_uri=${encodeURIComponent(redirectUri)}`;
+  res.json({ url: authUrl });
+});
+
+app.get("/auth/notion/callback", async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.status(400).send("No code provided");
+
+  try {
+    const clientId = process.env.NOTION_CLIENT_ID;
+    const clientSecret = process.env.NOTION_CLIENT_SECRET;
+    const redirectUri = process.env.NOTION_REDIRECT_URI || `${process.env.APP_URL}/auth/notion/callback`;
+
+    const response = await fetch("https://api.notion.com/v1/oauth/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+      },
+      body: JSON.stringify({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: redirectUri,
+      }),
+    });
+
+    const data = await response.json() as any;
+    if (data.access_token) {
+      notionToken = data.access_token;
+      notionClient = new Client({ auth: notionToken });
+      
+      res.send(`
+        <html>
+          <body>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
+                window.close();
+              } else {
+                window.location.href = '/';
+              }
+            </script>
+            <p>Authentication successful. This window should close automatically.</p>
+          </body>
+        </html>
+      `);
+    } else {
+      res.status(400).send("Failed to exchange token: " + JSON.stringify(data));
+    }
+  } catch (error) {
+    console.error("OAuth error:", error);
+    res.status(500).send("Internal Server Error during OAuth");
+  }
+});
+
 // --- Notion Tools (MCP-like) ---
 
 async function queryDatabase(databaseId: string, filter?: any) {
+  if (!notionClient) return [];
   try {
-    const response = await (notion.databases as any).query({
+    const response = await (notionClient.databases as any).query({
       database_id: databaseId,
       filter: filter,
     });
@@ -33,8 +101,9 @@ async function queryDatabase(databaseId: string, filter?: any) {
 }
 
 async function createPage(databaseId: string, properties: any) {
+  if (!notionClient) throw new Error("Notion not connected");
   try {
-    const response = await notion.pages.create({
+    const response = await notionClient.pages.create({
       parent: { database_id: databaseId },
       properties: properties,
     });
@@ -46,8 +115,9 @@ async function createPage(databaseId: string, properties: any) {
 }
 
 async function updatePage(pageId: string, properties: any) {
+  if (!notionClient) throw new Error("Notion not connected");
   try {
-    const response = await notion.pages.update({
+    const response = await notionClient.pages.update({
       page_id: pageId,
       properties: properties,
     });
@@ -62,13 +132,14 @@ async function updatePage(pageId: string, properties: any) {
 
 app.get("/api/config-status", (req, res) => {
   res.json({
-    notionConfigured: !!process.env.NOTION_API_KEY && !!process.env.NOTION_GOALS_DB_ID,
+    notionConfigured: !!notionToken && !!process.env.NOTION_GOALS_DB_ID,
     geminiConfigured: !!process.env.GEMINI_API_KEY,
+    oauthAvailable: !!process.env.NOTION_CLIENT_ID,
   });
 });
 
 app.get("/api/notion/data", async (req, res) => {
-  if (!process.env.NOTION_API_KEY) {
+  if (!notionToken) {
     return res.status(400).json({ error: "Notion not configured" });
   }
   try {

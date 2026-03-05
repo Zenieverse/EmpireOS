@@ -85,7 +85,7 @@ export default function App() {
   const [activeTab, setActiveTab] = React.useState('dashboard');
   const [data, setData] = React.useState<NotionData | null>(null);
   const [loading, setLoading] = React.useState(true);
-  const [configStatus, setConfigStatus] = React.useState({ notionConfigured: false, geminiConfigured: false });
+  const [configStatus, setConfigStatus] = React.useState({ notionConfigured: false, geminiConfigured: false, oauthAvailable: false });
 
   const fetchData = async () => {
     try {
@@ -107,6 +107,28 @@ export default function App() {
       setLoading(false);
     }
   };
+
+  const handleConnectNotion = async () => {
+    try {
+      const res = await fetch('/api/auth/notion/url');
+      const { url } = await res.json();
+      if (url) {
+        window.open(url, 'notion_oauth', 'width=600,height=700');
+      }
+    } catch (err) {
+      console.error("OAuth URL error:", err);
+    }
+  };
+
+  React.useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+        fetchData();
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
 
   React.useEffect(() => {
     fetchData();
@@ -301,21 +323,31 @@ export default function App() {
       <h2 className="text-2xl font-bold text-zinc-100 mb-2">Notion Not Connected</h2>
       <p className="text-zinc-400 mb-8">
         EmpireOS requires a Notion integration to function as your startup's command center. 
-        Please configure your environment variables with your Notion API key and Database IDs.
+        Please configure your environment variables or connect your workspace.
       </p>
-      <div className="w-full space-y-3 text-left bg-zinc-900 p-6 rounded-xl border border-zinc-800">
-        <p className="text-xs font-mono text-zinc-500 uppercase tracking-wider mb-4">Required Config</p>
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-zinc-400">NOTION_API_KEY</span>
-          <Badge variant={configStatus.notionConfigured ? "success" : "warning"}>
-            {configStatus.notionConfigured ? "Set" : "Missing"}
-          </Badge>
-        </div>
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-zinc-400">NOTION_GOALS_DB_ID</span>
-          <Badge variant={configStatus.notionConfigured ? "success" : "warning"}>
-            {configStatus.notionConfigured ? "Set" : "Missing"}
-          </Badge>
+      <div className="w-full space-y-4">
+        <button 
+          onClick={handleConnectNotion}
+          className="w-full py-3 bg-white text-black font-bold rounded-xl hover:bg-zinc-200 transition-all flex items-center justify-center gap-2"
+        >
+          <RefreshCw size={20} />
+          Connect Notion Workspace
+        </button>
+        
+        <div className="w-full space-y-3 text-left bg-zinc-900 p-6 rounded-xl border border-zinc-800">
+          <p className="text-xs font-mono text-zinc-500 uppercase tracking-wider mb-4">Required Config</p>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-zinc-400">NOTION_CLIENT_ID</span>
+            <Badge variant={configStatus.oauthAvailable ? "success" : "warning"}>
+              {configStatus.oauthAvailable ? "Set" : "Missing"}
+            </Badge>
+          </div>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-zinc-400">NOTION_GOALS_DB_ID</span>
+            <Badge variant={configStatus.notionConfigured ? "success" : "warning"}>
+              {configStatus.notionConfigured ? "Set" : "Missing"}
+            </Badge>
+          </div>
         </div>
       </div>
     </div>
